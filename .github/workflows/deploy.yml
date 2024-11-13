@@ -1,0 +1,136 @@
+name: Continuous Deployment
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build and test Docker image
+      run: |
+        docker build -t wisecow:latest .
+        docker run wisecow:latest
+
+    - name: Tag and push image to Amazon ECR
+      env:
+        ECR_REGISTRY: 490004613642.dkr.ecr.ap-south-1.amazonaws.com
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker tag wisecow:latest $ECR_REGISTRY/wisecow:$IMAGE_TAG
+        docker tag wisecow:latest $ECR_REGISTRY/wisecow:latest
+        docker push $ECR_REGISTRY/wisecow:$IMAGE_TAG
+        docker push $ECR_REGISTRY/wisecow:latest
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure kubectl
+      run: |
+        # Install AWS CLI
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
+        
+        # Update kubeconfig and verify connection
+        aws eks get-token --cluster-name your-cluster-name --region ap-south-1
+        aws eks update-kubeconfig --name your-cluster-name --region ap-south-1
+        
+        # Verify cluster connection
+        kubectl cluster-info
+        kubectl get nodes
+        
+    - name: Deploy to Kubernetes
+      env:
+        IMAGE_TAG: ${{ github.sha }}
+        ECR_REGISTRY: 490004613642.dkr.ecr.ap-south-1.amazonaws.com
+      run: |
+        # Verify AWS and kubectl configuration
+        aws sts get-caller-identity
+        kubectl config current-context
+        
+        # Create deployment file
+        cat <<EOF > deployment.yaml
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: wisecow
+          labels:
+            app: wisecow
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: wisecow
+          template:
+            metadata:
+              labels:
+                app: wisecow
+            spec:
+              containers:
+              - name: wisecow
+                image: ${ECR_REGISTRY}/wisecow:${IMAGE_TAG}
+                imagePullPolicy: Always
+                ports:
+                - containerPort: 80
+                resources:
+                  requests:
+                    cpu: "100m"
+                    memory: "128Mi"
+                  limits:
+                    cpu: "200m"
+                    memory: "256Mi"
+              imagePullSecrets:
+              - name: regcred
+        EOF
+        
+        # Apply the deployment
+        kubectl apply -f deployment.yaml
+        
+        # Wait for rollout
+        kubectl rollout status deployment/wisecow --timeout=300s
+
+    - name: Debug deployment
+      if: success() || failure()  # Run this step regardless of previous step's outcome
+      run: |
+        echo "AWS Caller Identity:"
+        aws sts get-caller-identity
+        
+        echo "Current kubectl context:"
+        kubectl config current-context
+        
+        echo "Cluster Info:"
+        kubectl cluster-info
+        
+        echo "Node Status:"
+        kubectl get nodes
+        
+        echo "Deployment Status:"
+        kubectl get deployments
+        
+        echo "Pod Status:"
+        kubectl get pods -l app=wisecow
+        
+        echo "Deployment Details:"
+        kubectl describe deployment wisecow || true
+        
+        echo "Pod Details:"
+        kubectl describe pods -l app=wisecow || true
