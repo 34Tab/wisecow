@@ -1,0 +1,58 @@
+name: CD to Kubernetes
+
+on:
+  push:
+    branches:
+      - main  # Trigger on pushes to the main branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1  # Specify your region
+
+      - name: Log in to AWS ECR
+        run: |
+          aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 490004613642.dkr.ecr.ap-south-1.amazonaws.com
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t 490004613642.dkr.ecr.ap-south-1.amazonaws.com/wisecow:${{ github.sha }} .
+          docker push 490004613642.dkr.ecr.ap-south-1.amazonaws.com/wisecow:${{ github.sha }}
+
+      - name: Set up Kubeconfig
+        run: |
+          mkdir -p ~/.kube  # Create the .kube directory if it doesn't exist
+          echo "${{ secrets.KUBECONFIG }}" | base64 --decode > ~/.kube/config
+          chmod 600 ~/.kube/config  # Ensure proper permissions for the config file
+
+      - name: Force delete old pod if stuck
+        run: |
+          # Get the name of the old pod (in case it is stuck)
+          OLD_POD=$(kubectl get pod -l app=wisecow -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}')
+          if [ -n "$OLD_POD" ]; then
+            echo "Force deleting stuck old pod $OLD_POD"
+            kubectl delete pod $OLD_POD --grace-period=0 --force
+          else
+            echo "No old pod found or no need to force delete."
+          fi
+
+      - name: Deploy to Kubernetes
+        run: |
+          # Update the deployment with the new image
+          kubectl set image deployment/wisecow wisecow=490004613642.dkr.ecr.ap-south-1.amazonaws.com/wisecow:${{ github.sha }}
+          
+          # Check rollout status
+          kubectl rollout status deployment/wisecow --timeout=300s  # Timeout after 5 minutes if stuck
+          
+          # If the deployment is still not complete after the timeout, force the update
+          kubectl rollout restart deployment/wisecow
