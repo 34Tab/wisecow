@@ -1,0 +1,66 @@
+name: Continuous Deployment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build and test Docker image
+      run: |
+        docker build -t wisecow:latest .
+        docker run wisecow:latest
+
+    - name: Tag and push image to Amazon ECR
+      env:
+        ECR_REGISTRY: 490004613642.dkr.ecr.ap-south-1.amazonaws.com
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker tag wisecow:latest $ECR_REGISTRY/wisecow:$IMAGE_TAG
+        docker tag wisecow:latest $ECR_REGISTRY/wisecow:latest
+        docker push $ECR_REGISTRY/wisecow:$IMAGE_TAG
+        docker push $ECR_REGISTRY/wisecow:latest
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Update kube config
+      run: |
+        aws eks update-kubeconfig --name your-cluster-name --region ap-south-1
+
+    - name: Deploy to Kubernetes
+      run: |
+        # Update Deployment
+        kubectl apply -f k8s/wisecow-deployment.yaml
+        
+        # Update the image
+        kubectl set image deployment/wisecow wisecow=490004613642.dkr.ecr.ap-south-1.amazonaws.com/wisecow:${{ github.sha }}
+        
+        # Wait for rollout to complete
+        kubectl rollout status deployment/wisecow --timeout=120s 
+
+    - name: Verify deployment
+      run: |
+        kubectl get pods -l app=wisecow
+        kubectl get deployment wisecow
