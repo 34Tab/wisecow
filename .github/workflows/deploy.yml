@@ -9,7 +9,7 @@ on:
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: wisecow
-  EKS_CLUSTER_NAME: your-cluster-name  # Replace with your EKS cluster name
+  EKS_CLUSTER_NAME: simple-cluster  # Replace with your EKS cluster name
   DEPLOYMENT_NAME: wisecow
   IMAGE_TAG: ${{ github.sha }}
 
