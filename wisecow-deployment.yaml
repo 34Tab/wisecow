@@ -9,6 +9,12 @@ spec:
   selector:
     matchLabels:
       app: wisecow
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 50%  # Allow more pods to be unavailable at a time to speed up rollout
+  progressDeadlineSeconds: 600  # Allow more time for the rollout
   template:
     metadata:
       labels:
