@@ -1,0 +1,54 @@
+name: Continuous Deployment to Kubernetes
+
+on:
+  push:
+    branches:
+      - main  # Trigger on push to the main branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Log in to AWS ECR
+      uses: aws-actions/amazon-ecr-login@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1  # Replace with your AWS region
+
+    - name: Build and Push Docker image
+      run: |
+        IMAGE_TAG=$(echo $GITHUB_SHA | head -c 7)  # Get short SHA for tag
+        docker build -t 490004613642.dkr.ecr.ap-south-1.amazonaws.com/wisecow:$IMAGE_TAG .
+        docker push 490004613642.dkr.ecr.ap-south-1.amazonaws.com/wisecow:$IMAGE_TAG
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ap-south-1
+
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v1
+      with:
+        kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+    - name: Deploy to Kubernetes
+      run: |
+        IMAGE_TAG=$(echo $GITHUB_SHA | head -c 7)
+        kubectl set image deployment/wisecow wisecow=490004613642.dkr.ecr.ap-south-1.amazonaws.com/wisecow:$IMAGE_TAG
+        kubectl apply -f wisecow-deployment.yaml
+        kubectl rollout status deployment/wisecow --timeout=600s  # Allow 10 minutes for the rollout
+        kubectl get pods -l app=wisecow
+
+    - name: Clean up old deployments (optional)
+      run: |
+        kubectl get deployment wisecow
+        kubectl delete pod -l app=wisecow --grace-period=0 --force  # Force deletion of old pods
