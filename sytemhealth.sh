@@ -61,3 +61,17 @@ while true; do
 
     sleep 5
 done
+
+
+
+
+output:
+=== System Health Monitor ===
+Time: 2024-11-15 06:27:52
+----------------------------
+CPU Usage: 0% [OK]
+Memory Usage: 35% [OK]
+Disk Usage: 54% [OK]
+
+
+
